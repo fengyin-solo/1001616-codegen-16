@@ -11,8 +11,13 @@ from app.seed import SEED_ROWS
 
 class Store:
     def __init__(self) -> None:
+        # 分档台账是业务模块的附属数据，不进概览模块清单，单独放一个桶。
+        ledger_rows = SEED_ROWS.pop("training_ledger", [])
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+        }
+        self._ledgers: dict[str, list[dict[str, Any]]] = {
+            "training_ledger": [dict(row) for row in ledger_rows]
         }
 
     def module_names(self) -> list[str]:
@@ -20,6 +25,10 @@ class Store:
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
+
+    def ledger_rows(self, name: str) -> list[dict[str, Any]]:
+        """读取成绩分档台账这类附属表；与业务主表互不干扰。"""
+        return self._ledgers.setdefault(name, [])
 
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):

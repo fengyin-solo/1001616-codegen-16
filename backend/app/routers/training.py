@@ -1,9 +1,10 @@
-"""资质培训接口：维护培训记录，覆盖开班登记、确认结班、取消培训等动作。"""
+"""资质培训接口：维护培训记录，覆盖开班登记、确认结班、取消培训与成绩分档台账。"""
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.training import TrainingService
@@ -30,6 +31,32 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+# 台账相关路由需排在 /{entry_id} 之前，否则「ledger」会被当成培训编号解析。
+@router.get("/ledger")
+def get_ledger() -> dict[str, Any]:
+    """成绩分档台账：各档人数与按主题归拢的补训名单同源于一份分档结果。"""
+    return service.ledger_view()
+
+
+@router.get("/remedial-export")
+def export_remedial() -> Response:
+    """把待补训人员名单另存为 CSV 文件，按培训主题归拢。"""
+    content = service.remedial_csv()
+    filename = "remedial-list.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}; filename*=utf-8''%E8%A1%A5%E8%AE%AD%E5%90%8D%E5%8D%95.csv"},
+    )
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出资质培训清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "training", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条培训记录明细；不存在时给出可读的错误说明。"""
@@ -50,16 +77,13 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条培训记录执行开班登记、确认结班、取消培训；不允许的动作会被拦下并说明原因。"""
+    """执行开班登记、确认结班、取消培训。
+
+    确认结班需随动作提交「成绩明细」（每人姓名与考核成绩）：分数缺失或超出
+    0 到 100 区间时整批驳回并指明人员与项；重复结班以最后一次成绩为准。
+    """
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    entry, message = service.run_action(entry_id, action, payload.values)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出资质培训清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "training", "total": total, "items": items}
